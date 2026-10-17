@@ -1,0 +1,45 @@
+-- Landing zone: S3 bucket -> external stage -> Snowpipe (auto-ingest via S3 event notifications).
+-- Fill in the bucket and IAM role ARN for your environment.
+
+USE ROLE ACCOUNTADMIN;
+CREATE STORAGE INTEGRATION IF NOT EXISTS LOANS_S3_INT
+  TYPE = EXTERNAL_STAGE
+  STORAGE_PROVIDER = 'S3'
+  ENABLED = TRUE
+  STORAGE_AWS_ROLE_ARN = 'arn:aws:iam::<account-id>:role/snowflake-loans-landing'
+  STORAGE_ALLOWED_LOCATIONS = ('s3://<landing-bucket>/loans/');
+GRANT USAGE ON INTEGRATION LOANS_S3_INT TO ROLE LOANS_LOADER;
+-- DESC INTEGRATION LOANS_S3_INT;  -- copy STORAGE_AWS_IAM_USER_ARN / EXTERNAL_ID into the IAM role trust policy
+
+USE ROLE LOANS_LOADER;
+USE SCHEMA LOANS.RAW;
+
+CREATE FILE FORMAT IF NOT EXISTS JSONL
+  TYPE = JSON
+  STRIP_OUTER_ARRAY = FALSE
+  IGNORE_UTF8_ERRORS = TRUE;
+
+CREATE STAGE IF NOT EXISTS LANDING
+  STORAGE_INTEGRATION = LOANS_S3_INT
+  URL = 's3://<landing-bucket>/loans/'
+  FILE_FORMAT = JSONL;
+
+-- RAW_LOAN_EVENTS and RAW_PAYMENTS are created by tables/raw.sql (run as LOANS_LOADER first).
+
+-- Snowpipe keeps 14 days of load history per pipe, so a re-delivered file is not loaded twice.
+CREATE PIPE IF NOT EXISTS PIPE_LOAN_EVENTS AUTO_INGEST = TRUE AS
+  COPY INTO RAW_LOAN_EVENTS (payload, file_name, loaded_at)
+  FROM (SELECT $1, METADATA$FILENAME, CURRENT_TIMESTAMP()::TIMESTAMP_NTZ FROM @LANDING/loan_events/)
+  FILE_FORMAT = (FORMAT_NAME = JSONL)
+  ON_ERROR = 'SKIP_FILE';
+
+CREATE PIPE IF NOT EXISTS PIPE_PAYMENTS AUTO_INGEST = TRUE AS
+  COPY INTO RAW_PAYMENTS (payload, file_name, loaded_at)
+  FROM (SELECT $1, METADATA$FILENAME, CURRENT_TIMESTAMP()::TIMESTAMP_NTZ FROM @LANDING/payments/)
+  FILE_FORMAT = (FORMAT_NAME = JSONL)
+  ON_ERROR = 'SKIP_FILE';
+
+-- SHOW PIPES;  -- point the bucket's s3:ObjectCreated:* notification at the pipe's notification_channel (SQS ARN)
+
+GRANT SELECT ON TABLE RAW_LOAN_EVENTS TO ROLE LOANS_TRANSFORMER;
+GRANT SELECT ON TABLE RAW_PAYMENTS    TO ROLE LOANS_TRANSFORMER;
