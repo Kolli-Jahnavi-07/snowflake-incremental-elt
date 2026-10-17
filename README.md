@@ -121,4 +121,4 @@ It models what this pipeline depends on: per-pipe load history, `SKIP_FILE`, str
 
 ## Author
 
-**Sai Jahnavi Kolli**, Data Engineer · [saijahnavikolli.com](https://saijahnavikolli.com) · kollijahnavi07@gmail.com
+**Sai Jahnavi Kolli**, Data Engineer · kollijahnavi07@gmail.com
