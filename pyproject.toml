@@ -1,0 +1,20 @@
+[project]
+name = "snowflake-incremental-elt"
+version = "1.0.0"
+description = "Incremental ELT on Snowflake with Snowpipe, Streams and Tasks, tested locally on DuckDB"
+requires-python = ">=3.11"
+dependencies = ["duckdb>=1.4", "sqlglot>=27", "pyyaml>=6"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+snowflake = ["snowflake-connector-python>=3.12"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 130
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
