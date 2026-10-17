@@ -1,0 +1,64 @@
+# Single source of truth for the incremental pipeline.
+# `python -m elt render` turns this into Snowflake DDL (streams + task graph);
+# the local runner executes the same SQL against DuckDB for tests.
+
+database: LOANS
+schedule: "USING CRON */5 * * * * UTC"
+# Serverless tasks: Snowflake sizes compute per run. Set `warehouse:` to pin a warehouse instead.
+warehouse: null
+serverless_initial_size: XSMALL
+task_timeout_ms: 600000
+suspend_after_failures: 3
+
+pipes:
+  - name: RAW.PIPE_LOAN_EVENTS
+    prefix: loan_events/
+    table: RAW.RAW_LOAN_EVENTS
+  - name: RAW.PIPE_PAYMENTS
+    prefix: payments/
+    table: RAW.RAW_PAYMENTS
+
+streams:
+  - name: RAW.RAW_LOAN_EVENTS_STREAM
+    table: RAW.RAW_LOAN_EVENTS
+    append_only: true
+  - name: RAW.RAW_LOAN_EVENTS_DQ_STREAM
+    table: RAW.RAW_LOAN_EVENTS
+    append_only: true
+  - name: RAW.RAW_PAYMENTS_STREAM
+    table: RAW.RAW_PAYMENTS
+    append_only: true
+  - name: RAW.RAW_PAYMENTS_DQ_STREAM
+    table: RAW.RAW_PAYMENTS
+    append_only: true
+  - name: CORE.LOAN_ACCOUNTS_STREAM
+    table: CORE.LOAN_ACCOUNTS
+    append_only: false
+    key: loan_id          # used only by the local emulator; Snowflake tracks rows internally
+  - name: CORE.PAYMENTS_STREAM
+    table: CORE.PAYMENTS
+    append_only: true
+
+tasks:
+  - name: CORE.T_REJECT_EVENTS
+    root: true
+    # Every stream a downstream task consumes is listed, so a task that failed is retried on the
+    # next tick even when no new files have arrived.
+    when_streams_have_data:
+      - RAW.RAW_LOAN_EVENTS_STREAM
+      - RAW.RAW_PAYMENTS_STREAM
+      - CORE.LOAN_ACCOUNTS_STREAM
+      - CORE.PAYMENTS_STREAM
+    sql: tasks/reject_events.sql
+  - name: CORE.T_LOAD_ACCOUNTS
+    after: [CORE.T_REJECT_EVENTS]
+    sql: tasks/load_accounts.sql
+  - name: CORE.T_LOAN_HISTORY
+    after: [CORE.T_LOAD_ACCOUNTS]
+    sql: tasks/loan_history.sql
+  - name: CORE.T_LOAD_PAYMENTS
+    after: [CORE.T_REJECT_EVENTS]
+    sql: tasks/load_payments.sql
+  - name: MART.T_DAILY_COLLECTIONS
+    after: [CORE.T_LOAD_PAYMENTS]
+    sql: tasks/daily_collections.sql
