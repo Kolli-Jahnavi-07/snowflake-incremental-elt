@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Lint
+        run: make lint
+      - name: Generated DDL matches pipeline.yml
+        run: make check-render
+      - name: Unit and end-to-end tests
+        run: make test
+      - name: Replay 90 days of feed through Snowpipe + task graph (local)
+        run: make demo
+
+  deploy:
+    # Deploys streams and tasks to Snowflake on main, only when credentials are configured.
+    needs: test
+    if: github.ref == 'refs/heads/main' && vars.SNOWFLAKE_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    environment: snowflake-prod
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt snowflake-connector-python
+      - name: Write key
+        run: echo "${{ secrets.SNOWFLAKE_PRIVATE_KEY }}" > "$RUNNER_TEMP/sf_key.p8"
+      - name: Deploy
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PRIVATE_KEY_FILE: ${{ runner.temp }}/sf_key.p8
+          SNOWFLAKE_ROLE: LOANS_TRANSFORMER
+        run: PYTHONPATH=src python -m elt deploy
